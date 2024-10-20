@@ -1,2 +1,4 @@
 .idea
 venv
+dataset/coco
+models/*.pth
