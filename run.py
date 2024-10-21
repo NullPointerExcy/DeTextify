@@ -5,7 +5,7 @@ from PIL import Image
 from torchvision import transforms
 from datetime import datetime
 from safetensors import safe_open
-from src.models.snn_vae_model import SNNVAE
+from src.models.snn_vae_model import SpikingVAE
 from src.train import pad_to_multiple
 
 MODELS_DIR = "models"
@@ -22,7 +22,7 @@ def load_latest_model(models_dir):
     latest_model_path = os.path.join(models_dir, model_files[0])
     print(f"Loading latest model: {latest_model_path}")
 
-    model = SNNVAE()
+    model = SpikingVAE(latent_dim=64, time_steps=16, img_height=128, img_width=128)
     with safe_open(latest_model_path, framework="pt", device="cpu") as f:
         state_dict = {key: f.get_tensor(key) for key in f.keys()}
         model.load_state_dict(state_dict)
@@ -52,7 +52,7 @@ def process_image(image_path, model):
 
     output_image = transforms.ToPILImage()(output_tensor.squeeze(0).cpu())
 
-    output_image_path = f"output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    output_image_path = f"outputs/output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
     output_image.save(output_image_path)
 
     print(f"Processed image saved as: {output_image_path}")

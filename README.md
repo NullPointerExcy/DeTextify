@@ -30,7 +30,7 @@ The model processes inputs over multiple timesteps (`T=16`). Each timestep integ
 - **Customizable architecture**: Easily adjustable convolutional layers, latent dimensions, and spiking behavior.
 
 ## Performance Evaluation
-### Structural Similarity Index (SSI)
+### Structural Similarity Index (SSIM)
 
 During training, we evaluate the model's performance using the **Structural Similarity Index (SSIM)** to measure the similarity between the original and reconstructed images.
 

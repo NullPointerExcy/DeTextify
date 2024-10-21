@@ -13,14 +13,14 @@ from safetensors.torch import save_file
 
 from src.utils.image_dataset import ImageDataset
 from src.utils.manipulate_train_dataset import add_text_to_image
-from src.models.snn_vae_model import SNNVAE
+from src.models.snn_vae_model import SpikingVAE
 import warnings
 
 from src.utils.plot_train_results import plot_train_results_loss, plot_train_results_ssim
 
 warnings.filterwarnings(
     "always",
-    message=r"optree.register_pytree_node.*",
+    message=r".*UserWarning.*",
     category=UserWarning,
 )
 
@@ -33,7 +33,7 @@ version: str = "0.1.0"
 do_manipulate_images: bool = False
 batch_size: int = 8
 epochs: int = 50
-learning_rate: float = 0.001
+learning_rate: float = 0.01
 
 # For testing purposes, limit the number of images to use
 max_images: int | None = 2000
@@ -79,17 +79,16 @@ def custom_collate_fn(batch):
 
 def loss_function(reconstructed_x, x, mu):
     """
-    Calculate the loss function for the SNN-VAE model
-    KL divergence is calculated for Bernoulli latent variables
+    Calculate the loss function for the SNN-VAE
+    Uses binary cross-entropy for the reconstruction loss and KL divergence for the latent space
     :param reconstructed_x:
     :param x:
     :param mu:
     :return:
     """
-    recon_loss = F.mse_loss(reconstructed_x, x, reduction='sum')
+    recon_loss = F.binary_cross_entropy(reconstructed_x, x, reduction='sum')
     q = torch.sigmoid(mu)
     kl_divergence = torch.sum(q * torch.log(q / 0.5) + (1 - q) * torch.log((1 - q) / 0.5))
-
     return recon_loss + kl_divergence
 
 
@@ -126,7 +125,8 @@ def calculate_ssim(img1, img2):
 
 def train_snn_vae():
     transform = transforms.Compose([
-        transforms.Lambda(pad_to_multiple),
+        #transforms.Lambda(pad_to_multiple),
+        transforms.Resize((128, 128)),
         transforms.ToTensor(),
     ])
     dataset = ImageDataset(ORIGINAL_IMAGES_DIR, MANIPULATED_IMAGES_DIR, transform=transform)
@@ -135,13 +135,11 @@ def train_snn_vae():
     train_size = len(dataset) - val_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8,
-                              collate_fn=custom_collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8,
-                            collate_fn=custom_collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = SNNVAE().to(device)
+    model = SpikingVAE(latent_dim=64, time_steps=16, img_height=128, img_width=128).to(device)
 
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
@@ -163,6 +161,7 @@ def train_snn_vae():
             loss = loss_function(outputs, targets, mu)
 
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
             running_loss += loss.item()
@@ -181,8 +180,7 @@ def train_snn_vae():
                 loss = loss_function(outputs, targets, mu)
                 val_loss += loss.item()
 
-                # Calculate SSIM for one batch
-                for j in range(inputs.size(0)):  # Loop through the batch
+                for j in range(inputs.size(0)):
                     total_ssim += calculate_ssim(outputs[j], targets[j])
 
         scheduler.step(val_loss)
@@ -191,10 +189,11 @@ def train_snn_vae():
         avg_ssim = total_ssim / len(val_loader.dataset)
         ssim_scores.append(avg_ssim)
 
-        print(
-            f'Epoch [{epoch + 1}/{epochs}], Train Loss: {train_losses[-1]:.4f}, Val Loss: {val_losses[-1]:.4f}, SSIM: {avg_ssim:.4f}')
+        print(f'Epoch [{epoch + 1}/{epochs}], Train Loss: {train_losses[-1]:.4f}, Val Loss: {val_losses[-1]:.4f}, SSIM: {avg_ssim:.4f}')
+        if (epoch + 1) % 10 == 0:
+            save_file(model.state_dict(), f"../models/snn_vae_epoch_{epoch+1}_v{version}.safetensors")
 
-    save_file(model.state_dict(), f"snn_vae_detextify_v{version}.safetensors")
+    save_file(model.state_dict(), f"../models/snn_vae_detextify_v{version}.safetensors")
 
     plot_train_results_loss(train_losses, val_losses)
     plot_train_results_ssim(ssim_scores)
