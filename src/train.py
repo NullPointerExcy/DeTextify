@@ -1,16 +1,28 @@
 import os
-import torch.nn.functional as F
-from PIL import Image, ImageDraw, ImageFont
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
-import matplotlib.pyplot as plt
-from tqdm import tqdm
 
-from src.manipulator.manipulate_train_dataset import add_text_to_image
-from src.model import UNetVAE
+import torch.nn.functional as F
+from PIL import Image, ImageOps
+from skimage.metrics import structural_similarity as ssim
+import torch
+import torch.optim as optim
+from torch.utils.data import DataLoader, random_split
+from torchvision import transforms
+import torchvision.transforms.functional as TF
+from tqdm import tqdm
+from safetensors.torch import save_file
+
+from src.utils.image_dataset import ImageDataset
+from src.utils.manipulate_train_dataset import add_text_to_image
+from src.models.snn_vae_model import SNNVAE
+import warnings
+
+from src.utils.plot_train_results import plot_train_results_loss, plot_train_results_ssim
+
+warnings.filterwarnings(
+    "always",
+    message=r"optree.register_pytree_node.*",
+    category=UserWarning,
+)
 
 
 TRAINING_SET_DIR = "../dataset/coco"
@@ -19,104 +31,179 @@ MANIPULATED_IMAGES_DIR = os.path.join(TRAINING_SET_DIR, "manipulated_images")
 
 version: str = "0.1.0"
 do_manipulate_images: bool = False
-batch_size: int = 64
-epochs: int = 100
-max_images: int | None = 4000
+batch_size: int = 8
+epochs: int = 50
+learning_rate: float = 0.001
+
+# For testing purposes, limit the number of images to use
+max_images: int | None = 2000
+# How much of the training set to use for validation (0-1)
+validation_split: float = 0.2
 
 
-def manipulate_images():
+def manipulate_images(ends_with: str = '.jpg', text: str = "Random Text"):
+    """
+    Manipulate the images in the training set by adding text to them
+    :param ends_with:
+    :param text:
+    :return:
+    """
     if not os.path.exists(MANIPULATED_IMAGES_DIR):
         os.makedirs(MANIPULATED_IMAGES_DIR)
 
-    image_files = [f for f in os.listdir(ORIGINAL_IMAGES_DIR) if f.endswith('.jpg')]
+    image_files = [f for f in os.listdir(ORIGINAL_IMAGES_DIR) if f.endswith(ends_with)]
     with tqdm(total=len(image_files)) as pbar:
         for img_file in image_files:
             img_path = os.path.join(ORIGINAL_IMAGES_DIR, img_file)
             img = Image.open(img_path)
-            manipulated_img = add_text_to_image(img.copy(), text="Random Text")
+            manipulated_img = add_text_to_image(img.copy(), text=text)
             manipulated_img.save(os.path.join(MANIPULATED_IMAGES_DIR, img_file))
             pbar.update(1)
 
 
-class ImageDataset(Dataset):
-    def __init__(self, original_dir, manipulated_dir, transform=None):
-        self.original_dir = original_dir
-        self.manipulated_dir = manipulated_dir
-        self.image_files = [f for f in os.listdir(original_dir) if f.endswith('.jpg')]
+def custom_collate_fn(batch):
+    # Get the max width and height in the batch
+    max_width = max([img.size(2) for img, _ in batch])
+    max_height = max([img.size(1) for img, _ in batch])
 
-        if max_images is not None:
-            self.image_files = self.image_files[:max_images]
-        self.transform = transform
+    padded_images = []
+    padded_targets = []
+    for img, target in batch:
+        padded_img = TF.pad(img, (0, 0, max_width - img.size(2), max_height - img.size(1)))
+        padded_target = TF.pad(target, (0, 0, max_width - target.size(2), max_height - target.size(1)))
+        padded_images.append(padded_img)
+        padded_targets.append(padded_target)
 
-    def __len__(self):
-        return len(self.image_files)
-
-    def __getitem__(self, idx):
-        img_file = self.image_files[idx]
-        original_img_path = os.path.join(self.original_dir, img_file)
-        manipulated_img_path = os.path.join(self.manipulated_dir, img_file)
-
-        original_img = Image.open(original_img_path).convert('RGB')
-        manipulated_img = Image.open(manipulated_img_path).convert('RGB')
-
-        if self.transform:
-            original_img = self.transform(original_img)
-            manipulated_img = self.transform(manipulated_img)
-
-        return manipulated_img, original_img
+    return torch.stack(padded_images), torch.stack(padded_targets)
 
 
-def loss_function(reconstructed_x, x, mu, logvar):
+def loss_function(reconstructed_x, x, mu):
+    """
+    Calculate the loss function for the SNN-VAE model
+    KL divergence is calculated for Bernoulli latent variables
+    :param reconstructed_x:
+    :param x:
+    :param mu:
+    :return:
+    """
     recon_loss = F.mse_loss(reconstructed_x, x, reduction='sum')
-    kl_divergence = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+    q = torch.sigmoid(mu)
+    kl_divergence = torch.sum(q * torch.log(q / 0.5) + (1 - q) * torch.log((1 - q) / 0.5))
+
     return recon_loss + kl_divergence
 
 
-def pad_to_multiple(img, multiple=32):
+def pad_to_multiple(img: Image, max_size=(128, 128), multiple=32):
+    """
+    Pad the image to the nearest multiple of the specified value
+    :param img:
+    :param max_size: Maximum size of the image
+    :param multiple: Multiple to pad to
+    :return:
+    """
+    width, height = img.size
+
+    if width > max_size[0] or height > max_size[1]:
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+
     width, height = img.size
     pad_width = (multiple - width % multiple) % multiple
     pad_height = (multiple - height % multiple) % multiple
 
     padding = (0, 0, pad_width, pad_height)
-    return F.pad(img, padding, mode='constant', value=0)
+    return ImageOps.expand(img, padding)
 
 
-def train_unet():
+def calculate_ssim(img1, img2):
+    img1 = img1.cpu().numpy().transpose(1, 2, 0)
+    img2 = img2.cpu().numpy().transpose(1, 2, 0)
+
+    min_dim = min(img1.shape[0], img1.shape[1])
+    win_size = min(7, min_dim)
+
+    return ssim(img1, img2, win_size=win_size, channel_axis=2, data_range=1.0)
+
+
+def train_snn_vae():
     transform = transforms.Compose([
-        transforms.Lambda(lambda img: pad_to_multiple(img, multiple=32)),
+        transforms.Lambda(pad_to_multiple),
         transforms.ToTensor(),
     ])
     dataset = ImageDataset(ORIGINAL_IMAGES_DIR, MANIPULATED_IMAGES_DIR, transform=transform)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+
+    val_size = int(len(dataset) * validation_split)
+    train_size = len(dataset) - val_size
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8,
+                              collate_fn=custom_collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8,
+                            collate_fn=custom_collate_fn)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = UNetVAE().to(device)
+    model = SNNVAE().to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
+
+    train_losses = []
+    val_losses = []
+    ssim_scores = []
 
     print("Starting training...")
     for epoch in range(epochs):
+        # Training phase
         model.train()
         running_loss = 0.0
-        for i, (inputs, targets) in enumerate(dataloader):
+        for i, (inputs, targets) in enumerate(train_loader):
             inputs, targets = inputs.to(device), targets.to(device)
 
             optimizer.zero_grad()
-            outputs, mu, logvar = model(inputs)
-            loss = loss_function(outputs, targets, mu, logvar)
+            outputs, mu, _ = model(inputs)
+            loss = loss_function(outputs, targets, mu)
 
             loss.backward()
             optimizer.step()
 
             running_loss += loss.item()
 
-        print(f'Epoch [{epoch+1}/{epochs}], Loss: {running_loss/len(dataloader):.4f}')
+        train_losses.append(running_loss / len(train_loader))
 
-    torch.save(model.state_dict(), f"unet_text_removal_v{version}.pth")
+        # Validation phase
+        model.eval()
+        val_loss = 0.0
+        total_ssim = 0.0
+        with torch.no_grad():
+            for inputs, targets in val_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+
+                outputs, mu, _ = model(inputs)
+                loss = loss_function(outputs, targets, mu)
+                val_loss += loss.item()
+
+                # Calculate SSIM for one batch
+                for j in range(inputs.size(0)):  # Loop through the batch
+                    total_ssim += calculate_ssim(outputs[j], targets[j])
+
+        scheduler.step(val_loss)
+
+        val_losses.append(val_loss / len(val_loader))
+        avg_ssim = total_ssim / len(val_loader.dataset)
+        ssim_scores.append(avg_ssim)
+
+        print(
+            f'Epoch [{epoch + 1}/{epochs}], Train Loss: {train_losses[-1]:.4f}, Val Loss: {val_losses[-1]:.4f}, SSIM: {avg_ssim:.4f}')
+
+    save_file(model.state_dict(), f"snn_vae_detextify_v{version}.safetensors")
+
+    plot_train_results_loss(train_losses, val_losses)
+    plot_train_results_ssim(ssim_scores)
+
     return model
 
 
 if __name__ == "__main__":
+    # Only manipulate images if the flag is set (to avoid unnecessary processing)
     if do_manipulate_images:
         manipulate_images()
-    model = train_unet()
+    model = train_snn_vae()

@@ -4,14 +4,15 @@ import torch
 from PIL import Image
 from torchvision import transforms
 from datetime import datetime
-from src.model import UNetVAE
+from safetensors import safe_open
+from src.models.snn_vae_model import SNNVAE
 from src.train import pad_to_multiple
 
 MODELS_DIR = "models"
 
 
 def load_latest_model(models_dir):
-    model_files = [f for f in os.listdir(models_dir) if f.endswith('.pth')]
+    model_files = [f for f in os.listdir(models_dir) if f.endswith('.safetensors')]
 
     if not model_files:
         raise FileNotFoundError("No model found in the models directory.")
@@ -21,10 +22,12 @@ def load_latest_model(models_dir):
     latest_model_path = os.path.join(models_dir, model_files[0])
     print(f"Loading latest model: {latest_model_path}")
 
-    model = UNetVAE()
-    model.load_state_dict(torch.load(latest_model_path))
-    model.eval()
+    model = SNNVAE()
+    with safe_open(latest_model_path, framework="pt", device="cpu") as f:
+        state_dict = {key: f.get_tensor(key) for key in f.keys()}
+        model.load_state_dict(state_dict)
 
+    model.eval()
     return model
 
 
