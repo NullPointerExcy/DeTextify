@@ -33,12 +33,13 @@ version: str = "0.1.0"
 do_manipulate_images: bool = False
 batch_size: int = 8
 epochs: int = 50
-learning_rate: float = 0.01
+learning_rate: float = 0.0002
 
 # For testing purposes, limit the number of images to use
 max_images: int | None = 2000
 # How much of the training set to use for validation (0-1)
 validation_split: float = 0.2
+beta1 = 0.5
 
 
 def manipulate_images(ends_with: str = '.jpg', text: str = "Random Text"):
@@ -141,7 +142,7 @@ def train_snn_vae():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = SpikingVAE(latent_dim=64, time_steps=16, img_height=128, img_width=128).to(device)
 
-    optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, betas=(beta1, 0.999))
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
 
     train_losses = []
@@ -150,7 +151,9 @@ def train_snn_vae():
 
     print("Starting training...")
     for epoch in range(epochs):
+        # ======================================
         # Training phase
+        # ======================================
         model.train()
         running_loss = 0.0
         for i, (inputs, targets) in enumerate(train_loader):
@@ -168,7 +171,9 @@ def train_snn_vae():
 
         train_losses.append(running_loss / len(train_loader))
 
+        # ======================================
         # Validation phase
+        # ======================================
         model.eval()
         val_loss = 0.0
         total_ssim = 0.0
@@ -193,7 +198,7 @@ def train_snn_vae():
         if (epoch + 1) % 10 == 0:
             save_file(model.state_dict(), f"../models/snn_vae_epoch_{epoch+1}_v{version}.safetensors")
 
-    save_file(model.state_dict(), f"../models/snn_vae_detextify_v{version}.safetensors")
+    save_file(model.state_dict(), f"../models/snn_vae_checkpoints/snn_vae_detextify_v{version}.safetensors")
 
     plot_train_results_loss(train_losses, val_losses)
     plot_train_results_ssim(ssim_scores)

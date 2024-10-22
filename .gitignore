@@ -1,4 +1,7 @@
 .idea
 venv
 dataset/coco
-models/*.safetensors
+models/gan_checkpoints/*.pth
+models/snn_vae_checkpoints/*.safetensors
+outputs/*.jpg
+*.png

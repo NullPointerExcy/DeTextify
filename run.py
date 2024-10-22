@@ -37,7 +37,8 @@ def process_image(image_path, model):
 
     image = Image.open(image_path).convert('RGB')
     transform = transforms.Compose([
-        transforms.Lambda(lambda img: pad_to_multiple(img, multiple=32)),
+        #transforms.Lambda(lambda img: pad_to_multiple(img, multiple=32)),
+        transforms.Resize((128, 128)),
         transforms.ToTensor(),
     ])
 

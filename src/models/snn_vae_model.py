@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import norse.torch as snn
 
+
 class SpikingVAE(nn.Module):
     def __init__(self, latent_dim=64, time_steps=16, img_height=128, img_width=96):
         super(SpikingVAE, self).__init__()
@@ -10,7 +11,9 @@ class SpikingVAE(nn.Module):
         self.img_height = img_height
         self.img_width = img_width
 
+        # ======================================
         # Encoder layers
+        # ======================================
         self.encoder_conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
         self.encoder_lif1 = snn.LIFCell()
 
@@ -35,7 +38,9 @@ class SpikingVAE(nn.Module):
         # Recurrent layer for autoregressive sampling
         self.latent_recurrent = nn.GRUCell(latent_dim, latent_dim)
 
+        # ======================================
         # Decoder layers
+        # ======================================
         self.decoder_fc = nn.Linear(self.latent_dim, 512 * 8 * 8)
 
         self.decoder_conv1 = nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1)
@@ -55,7 +60,6 @@ class SpikingVAE(nn.Module):
         self.expand_fc = nn.Linear(self.latent_dim, 512 * 8 * 8)
 
     def _calculate_feature_size(self):
-        # Compute the size of the features after the encoder layers
         with torch.no_grad():
             dummy_input = torch.zeros(1, 3, self.img_height, self.img_width)
             x = self.encoder_conv1(dummy_input)
@@ -80,8 +84,9 @@ class SpikingVAE(nn.Module):
     def forward(self, x):
         batch_size = x.size(0)
         device = x.device
-
-        # Encoder forward pass
+        # ======================================
+        # Encoder
+        # ======================================
         x = self.encoder_conv1(x)
         spk1, _ = self.encoder_lif1(x)
         x = self.pooling(spk1)
@@ -114,8 +119,9 @@ class SpikingVAE(nn.Module):
         # Autoregressive sampling and decoding
         for t in range(self.time_steps):
             z = self.autoregressive_sampling(mu, z, h)
-
+            # ======================================
             # Decoder
+            # ======================================
             z_decoded = self.expand_fc(z)
             z_decoded = z_decoded.view(batch_size, 512, 8, 8)
 
@@ -134,7 +140,6 @@ class SpikingVAE(nn.Module):
             out = torch.sigmoid(self.output_conv(spk_d4))
             reconstructed_output += out
 
-            # Update accumulators
             mu_accum += mu
             logvar_accum += logvar
 
@@ -146,7 +151,6 @@ class SpikingVAE(nn.Module):
         return x_reconstructed, mu, logvar
 
     def autoregressive_sampling(self, mu, prev_z, h):
-        # Update hidden state
         h = self.latent_recurrent(prev_z, h)
         mu = mu + h
         probabilities = torch.sigmoid(mu)
