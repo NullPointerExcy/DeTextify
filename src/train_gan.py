@@ -60,6 +60,9 @@ if __name__ == '__main__':
     optimizer_G = torch.optim.AdamW(generator.parameters(), lr=lr, betas=(beta1, 0.999))
     optimizer_D = torch.optim.AdamW(discriminator.parameters(), lr=lr, betas=(beta1, 0.999))
 
+    g_loss_total = []
+    d_loss_total = []
+
     transform = transforms.Compose([
         transforms.Resize((128, 128)),
         transforms.ToTensor(),
@@ -151,8 +154,10 @@ if __name__ == '__main__':
             # Calculate average validation loss
             val_g_loss /= len(val_loader)
             val_d_loss /= len(val_loader)
+            g_loss_total.append(val_g_loss)
+            d_loss_total.append(val_d_loss)
             print(f"[Epoch {epoch}/{num_epochs}] [Validation G loss: {val_g_loss}] [Validation D loss: {val_d_loss}]")
 
-        # Save models
-        plot_train_results_gd_loss(val_g_loss, val_d_loss)
-        save_models(generator, discriminator, optimizer_G, optimizer_D, epoch)
+    # Save models
+    plot_train_results_gd_loss(val_g_loss, val_d_loss)
+    save_models(generator, discriminator, optimizer_G, optimizer_D, 100)

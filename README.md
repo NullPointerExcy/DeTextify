@@ -6,6 +6,12 @@ This project implements a **SNN** using a **Convolutional VAE** architecture wit
 
 The primary goal of this project is to explore how spiking neurons, which mimic the behavior of biological neurons, can be used in deep learning models for image processing. The spiking neurons accumulate input over multiple time steps and generate spikes that contribute to the overall output of the network.
 
+## Legal Disclaimer
+
+This tool **must not** be used to remove watermarks, logos, or other identifiers from copyrighted images without proper authorization. Removing such elements from digital media is often a violation of copyright laws and intellectual property rights.
+
+We strongly discourage any misuse of this tool. The authors and contributors of this project are not responsible for any illegal or unethical use of the software. You are solely responsible for ensuring that your use of the software complies with all applicable laws and regulations.
+
 ## Architecture
 
 The model is a **Spiking VAE** that consists of the following components:
