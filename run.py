@@ -6,9 +6,9 @@ from torchvision import transforms
 from datetime import datetime
 from safetensors import safe_open
 from src.models.snn_vae_model import SpikingVAE
-from src.train import pad_to_multiple
+from src.train_snn import pad_to_multiple
 
-MODELS_DIR = "models"
+MODELS_DIR = "models/snn_vae_checkpoints"
 
 
 def load_latest_model(models_dir):

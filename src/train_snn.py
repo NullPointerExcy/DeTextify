@@ -24,19 +24,18 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-
 TRAINING_SET_DIR = "../dataset/coco"
 ORIGINAL_IMAGES_DIR = os.path.join(TRAINING_SET_DIR, "train2017")
 MANIPULATED_IMAGES_DIR = os.path.join(TRAINING_SET_DIR, "manipulated_images")
 
 version: str = "0.1.0"
 do_manipulate_images: bool = False
-batch_size: int = 8
-epochs: int = 50
-learning_rate: float = 0.0002
+batch_size: int = 16
+epochs: int = 100
+learning_rate: float = 0.002
 
 # For testing purposes, limit the number of images to use
-max_images: int | None = 2000
+max_images: int | None = None
 # How much of the training set to use for validation (0-1)
 validation_split: float = 0.2
 beta1 = 0.5
@@ -62,37 +61,6 @@ def manipulate_images(ends_with: str = '.jpg', text: str = "Random Text"):
             pbar.update(1)
 
 
-def custom_collate_fn(batch):
-    # Get the max width and height in the batch
-    max_width = max([img.size(2) for img, _ in batch])
-    max_height = max([img.size(1) for img, _ in batch])
-
-    padded_images = []
-    padded_targets = []
-    for img, target in batch:
-        padded_img = TF.pad(img, (0, 0, max_width - img.size(2), max_height - img.size(1)))
-        padded_target = TF.pad(target, (0, 0, max_width - target.size(2), max_height - target.size(1)))
-        padded_images.append(padded_img)
-        padded_targets.append(padded_target)
-
-    return torch.stack(padded_images), torch.stack(padded_targets)
-
-
-def loss_function(reconstructed_x, x, mu):
-    """
-    Calculate the loss function for the SNN-VAE
-    Uses binary cross-entropy for the reconstruction loss and KL divergence for the latent space
-    :param reconstructed_x:
-    :param x:
-    :param mu:
-    :return:
-    """
-    recon_loss = F.binary_cross_entropy(reconstructed_x, x, reduction='sum')
-    q = torch.sigmoid(mu)
-    kl_divergence = torch.sum(q * torch.log(q / 0.5) + (1 - q) * torch.log((1 - q) / 0.5))
-    return recon_loss + kl_divergence
-
-
 def pad_to_multiple(img: Image, max_size=(128, 128), multiple=32):
     """
     Pad the image to the nearest multiple of the specified value
@@ -114,7 +82,26 @@ def pad_to_multiple(img: Image, max_size=(128, 128), multiple=32):
     return ImageOps.expand(img, padding)
 
 
+def loss_function(reconstructed_x, x, mu, logvar):
+    """
+    Calculate the loss function for the SNN-VAE
+    Uses binary cross-entropy for the reconstruction loss and KL divergence for the latent space
+    :param reconstructed_x:
+    :param x:
+    :param mu:
+    :param logvar:
+    :return:
+    """
+    recon_loss = F.binary_cross_entropy(reconstructed_x, x, reduction='sum')
+    kl_divergence = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
+    return recon_loss + kl_divergence
+
+
 def calculate_ssim(img1, img2):
+    """
+    Calculate the Structural Similarity Index (SSIM) between two images
+    """
     img1 = img1.cpu().numpy().transpose(1, 2, 0)
     img2 = img2.cpu().numpy().transpose(1, 2, 0)
 
@@ -125,11 +112,14 @@ def calculate_ssim(img1, img2):
 
 
 def train_snn_vae():
+    """
+    Train the SpikingVAE model on the image dataset.
+    """
     transform = transforms.Compose([
-        #transforms.Lambda(pad_to_multiple),
         transforms.Resize((128, 128)),
         transforms.ToTensor(),
     ])
+
     dataset = ImageDataset(ORIGINAL_IMAGES_DIR, MANIPULATED_IMAGES_DIR, transform=transform)
 
     val_size = int(len(dataset) * validation_split)
@@ -160,8 +150,8 @@ def train_snn_vae():
             inputs, targets = inputs.to(device), targets.to(device)
 
             optimizer.zero_grad()
-            outputs, mu, _ = model(inputs)
-            loss = loss_function(outputs, targets, mu)
+            outputs, mu, logvar = model(inputs)
+            loss = loss_function(outputs, targets, mu, logvar)
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -181,8 +171,8 @@ def train_snn_vae():
             for inputs, targets in val_loader:
                 inputs, targets = inputs.to(device), targets.to(device)
 
-                outputs, mu, _ = model(inputs)
-                loss = loss_function(outputs, targets, mu)
+                outputs, mu, logvar = model(inputs)
+                loss = loss_function(outputs, targets, mu, logvar)
                 val_loss += loss.item()
 
                 for j in range(inputs.size(0)):

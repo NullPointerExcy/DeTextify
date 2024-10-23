@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
-import norse.torch as snn
+import norse.torch as snn  # Using norse for LIF neurons
+
+from src.models.components.LIFSpike import LIFSpike
 
 
 class SpikingVAE(nn.Module):
@@ -12,26 +14,28 @@ class SpikingVAE(nn.Module):
         self.img_width = img_width
 
         # ======================================
-        # Encoder layers
+        # Encoder (Spiking with LIF neurons)
         # ======================================
-        self.encoder_conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
-        self.encoder_lif1 = snn.LIFCell()
+        self.encoder = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=3, padding=1),
+            LIFSpike(),
+            nn.MaxPool2d(2, 2),
 
-        self.encoder_conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.encoder_lif2 = snn.LIFCell()
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            LIFSpike(),
+            nn.MaxPool2d(2, 2),
 
-        self.encoder_conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
-        self.encoder_lif3 = snn.LIFCell()
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            LIFSpike(),
+            nn.MaxPool2d(2, 2),
 
-        self.encoder_conv4 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
-        self.encoder_lif4 = snn.LIFCell()
-
-        self.pooling = nn.MaxPool2d(2, 2)
-
-        # Calculate feature size after encoding
+            nn.Conv2d(256, 512, kernel_size=3, padding=1),
+            LIFSpike(),
+            nn.MaxPool2d(2, 2)
+        )
         self.feature_size = self._calculate_feature_size()
 
-        # Latent space parameters
+        # Latent space layers (mu and logvar for the VAE part)
         self.mu_layer = nn.Linear(self.feature_size, self.latent_dim)
         self.logvar_layer = nn.Linear(self.feature_size, self.latent_dim)
 
@@ -39,111 +43,70 @@ class SpikingVAE(nn.Module):
         self.latent_recurrent = nn.GRUCell(latent_dim, latent_dim)
 
         # ======================================
-        # Decoder layers
+        # Decoder (Spiking with LIF neurons)
         # ======================================
-        self.decoder_fc = nn.Linear(self.latent_dim, 512 * 8 * 8)
-
-        self.decoder_conv1 = nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1)
-        self.decoder_lif1 = snn.LIFCell()
-
-        self.decoder_conv2 = nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1)
-        self.decoder_lif2 = snn.LIFCell()
-
-        self.decoder_conv3 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)
-        self.decoder_lif3 = snn.LIFCell()
-
-        self.decoder_conv4 = nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2, padding=0)
-        self.decoder_lif4 = snn.LIFCell()
-
-        self.output_conv = nn.Conv2d(32, 3, kernel_size=3, padding=1)
-
         self.expand_fc = nn.Linear(self.latent_dim, 512 * 8 * 8)
+
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+            LIFSpike(),
+
+            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            LIFSpike(),
+
+            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            LIFSpike(),
+
+            nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2, padding=0),
+            LIFSpike(),
+
+            nn.Conv2d(32, 3, kernel_size=3, padding=1),
+            nn.Sigmoid()
+        )
 
     def _calculate_feature_size(self):
         with torch.no_grad():
             dummy_input = torch.zeros(1, 3, self.img_height, self.img_width)
-            x = self.encoder_conv1(dummy_input)
-            spk1, _ = self.encoder_lif1(x)
-            x = self.pooling(spk1)
-
-            x = self.encoder_conv2(x)
-            spk2, _ = self.encoder_lif2(x)
-            x = self.pooling(spk2)
-
-            x = self.encoder_conv3(x)
-            spk3, _ = self.encoder_lif3(x)
-            x = self.pooling(spk3)
-
-            x = self.encoder_conv4(x)
-            spk4, _ = self.encoder_lif4(x)
-            x = self.pooling(spk4)
-
+            x = self.encoder(dummy_input)  # No need to unpack tuples
             feature_size = x.view(1, -1).size(1)
         return feature_size
 
     def forward(self, x):
         batch_size = x.size(0)
         device = x.device
+
         # ======================================
         # Encoder
         # ======================================
-        x = self.encoder_conv1(x)
-        spk1, _ = self.encoder_lif1(x)
-        x = self.pooling(spk1)
+        spikes = self.encoder(x)
 
-        x = self.encoder_conv2(x)
-        spk2, _ = self.encoder_lif2(x)
-        x = self.pooling(spk2)
-
-        x = self.encoder_conv3(x)
-        spk3, _ = self.encoder_lif3(x)
-        x = self.pooling(spk3)
-
-        x = self.encoder_conv4(x)
-        spk4, _ = self.encoder_lif4(x)
-        x = self.pooling(spk4)
-
-        x_flat = x.view(batch_size, -1)
+        x_flat = spikes.view(batch_size, -1)
         mu = self.mu_layer(x_flat)
         logvar = self.logvar_layer(x_flat)
 
-        # Initialize latent variables and hidden state
         z = torch.zeros(batch_size, self.latent_dim, device=device)
         h = torch.zeros(batch_size, self.latent_dim, device=device)
 
-        # Initialize accumulators
         reconstructed_output = 0
         mu_accum = 0
         logvar_accum = 0
 
-        # Autoregressive sampling and decoding
+        # Autoregressive sampling and decoding over time steps
         for t in range(self.time_steps):
             z = self.autoregressive_sampling(mu, z, h)
+
             # ======================================
-            # Decoder
+            # Decoder (passing through spiking decoder)
             # ======================================
             z_decoded = self.expand_fc(z)
             z_decoded = z_decoded.view(batch_size, 512, 8, 8)
 
-            x = self.decoder_conv1(z_decoded)
-            spk_d1, _ = self.decoder_lif1(x)
+            out_spikes = self.decoder(z_decoded)
 
-            x = self.decoder_conv2(spk_d1)
-            spk_d2, _ = self.decoder_lif2(x)
-
-            x = self.decoder_conv3(spk_d2)
-            spk_d3, _ = self.decoder_lif3(x)
-
-            x = self.decoder_conv4(spk_d3)
-            spk_d4, _ = self.decoder_lif4(x)
-
-            out = torch.sigmoid(self.output_conv(spk_d4))
-            reconstructed_output += out
-
+            reconstructed_output += out_spikes
             mu_accum += mu
             logvar_accum += logvar
 
-        # Average over time steps
         x_reconstructed = reconstructed_output / self.time_steps
         mu = mu_accum / self.time_steps
         logvar = logvar_accum / self.time_steps
@@ -151,6 +114,10 @@ class SpikingVAE(nn.Module):
         return x_reconstructed, mu, logvar
 
     def autoregressive_sampling(self, mu, prev_z, h):
+        """
+        Autoregressive sampling from latent space.
+        Generates new latent variables based on previous time step.
+        """
         h = self.latent_recurrent(prev_z, h)
         mu = mu + h
         probabilities = torch.sigmoid(mu)
