@@ -31,7 +31,7 @@ MANIPULATED_IMAGES_DIR = os.path.join(TRAINING_SET_DIR, "manipulated_images")
 version: str = "0.1.0"
 do_manipulate_images: bool = False
 batch_size: int = 16
-epochs: int = 100
+epochs: int = 50
 learning_rate: float = 0.002
 
 # For testing purposes, limit the number of images to use
@@ -186,7 +186,7 @@ def train_snn_vae():
 
         print(f'Epoch [{epoch + 1}/{epochs}], Train Loss: {train_losses[-1]:.4f}, Val Loss: {val_losses[-1]:.4f}, SSIM: {avg_ssim:.4f}')
         if (epoch + 1) % 10 == 0:
-            save_file(model.state_dict(), f"../models/snn_vae_epoch_{epoch+1}_v{version}.safetensors")
+            save_file(model.state_dict(), f"../models/snn_vae_checkpoints/snn_vae_epoch_{epoch+1}_v{version}.safetensors")
 
     save_file(model.state_dict(), f"../models/snn_vae_checkpoints/snn_vae_detextify_v{version}.safetensors")
 

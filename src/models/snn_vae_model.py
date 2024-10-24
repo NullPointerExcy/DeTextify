@@ -16,21 +16,31 @@ class SpikingVAE(nn.Module):
         # ======================================
         # Encoder (Spiking with LIF neurons)
         # ======================================
+        # Define LIF parameters for the Encoder
+        lif_params_encoder = snn.LIFParameters(
+            tau_syn_inv=torch.as_tensor(1.0 / 4e-3),
+            tau_mem_inv=torch.as_tensor(1.0 / 5e-3),
+            v_leak=torch.as_tensor(0.0),
+            v_th=torch.as_tensor(0.6),
+            v_reset=torch.as_tensor(0.0),
+            method="super",
+            alpha=torch.as_tensor(100.0),
+        )
         self.encoder = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=3, padding=1),
-            LIFSpike(),
+            LIFSpike(p=lif_params_encoder),
             nn.MaxPool2d(2, 2),
 
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            LIFSpike(),
+            LIFSpike(p=lif_params_encoder),
             nn.MaxPool2d(2, 2),
 
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            LIFSpike(),
+            LIFSpike(p=lif_params_encoder),
             nn.MaxPool2d(2, 2),
 
             nn.Conv2d(256, 512, kernel_size=3, padding=1),
-            LIFSpike(),
+            LIFSpike(p=lif_params_encoder),
             nn.MaxPool2d(2, 2)
         )
         self.feature_size = self._calculate_feature_size()
@@ -45,20 +55,30 @@ class SpikingVAE(nn.Module):
         # ======================================
         # Decoder (Spiking with LIF neurons)
         # ======================================
+        # Define LIF parameters for the Decoder
+        lif_params_decoder = snn.LIFParameters(
+            tau_syn_inv=torch.as_tensor(1.0 / 6e-3),
+            tau_mem_inv=torch.as_tensor(1.0 / 10e-3),
+            v_leak=torch.as_tensor(0.0),
+            v_th=torch.as_tensor(1.1),
+            v_reset=torch.as_tensor(0.0),
+            method="super",
+            alpha=torch.as_tensor(80.0),
+        )
         self.expand_fc = nn.Linear(self.latent_dim, 512 * 8 * 8)
 
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
-            LIFSpike(),
+            LIFSpike(p=lif_params_decoder),
 
             nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
-            LIFSpike(),
+            LIFSpike(p=lif_params_decoder),
 
             nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
-            LIFSpike(),
+            LIFSpike(p=lif_params_decoder),
 
             nn.ConvTranspose2d(64, 32, kernel_size=2, stride=2, padding=0),
-            LIFSpike(),
+            LIFSpike(p=lif_params_decoder),
 
             nn.Conv2d(32, 3, kernel_size=3, padding=1),
             nn.Sigmoid()
