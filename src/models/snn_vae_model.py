@@ -24,7 +24,7 @@ class SpikingVAE(nn.Module):
             v_th=torch.as_tensor(0.6),
             v_reset=torch.as_tensor(0.0),
             method="super",
-            alpha=torch.as_tensor(100.0),
+            alpha=torch.as_tensor(200.0),
         )
         self.encoder = nn.Sequential(
             nn.Conv2d(3, 64, kernel_size=3, padding=1),
@@ -60,10 +60,10 @@ class SpikingVAE(nn.Module):
             tau_syn_inv=torch.as_tensor(1.0 / 6e-3),
             tau_mem_inv=torch.as_tensor(1.0 / 10e-3),
             v_leak=torch.as_tensor(0.0),
-            v_th=torch.as_tensor(1.1),
+            v_th=torch.as_tensor(0.7),
             v_reset=torch.as_tensor(0.0),
             method="super",
-            alpha=torch.as_tensor(80.0),
+            alpha=torch.as_tensor(200.0),
         )
         self.expand_fc = nn.Linear(self.latent_dim, 512 * 8 * 8)
 

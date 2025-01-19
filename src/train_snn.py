@@ -1,5 +1,16 @@
 import os
 
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
+import warnings
+
+warnings.filterwarnings(
+    action="ignore",
+    category=UserWarning,
+    message=r".*PyTree type <class 'norse.*"
+)
+
 import torch.nn.functional as F
 from PIL import Image, ImageOps
 from skimage.metrics import structural_similarity as ssim
@@ -14,15 +25,8 @@ from safetensors.torch import save_file
 from src.utils.image_dataset import ImageDataset
 from src.utils.manipulate_train_dataset import add_text_to_image
 from src.models.snn_vae_model import SpikingVAE
-import warnings
 
 from src.utils.plot_train_results import plot_train_results_loss, plot_train_results_ssim
-
-warnings.filterwarnings(
-    "always",
-    message=r".*UserWarning.*",
-    category=UserWarning,
-)
 
 TRAINING_SET_DIR = "../dataset/coco"
 ORIGINAL_IMAGES_DIR = os.path.join(TRAINING_SET_DIR, "train2017")
@@ -30,9 +34,9 @@ MANIPULATED_IMAGES_DIR = os.path.join(TRAINING_SET_DIR, "manipulated_images")
 
 version: str = "0.1.0"
 do_manipulate_images: bool = False
-batch_size: int = 16
-epochs: int = 50
-learning_rate: float = 0.002
+batch_size: int = 32
+epochs: int = 100
+learning_rate: float = 0.02
 
 # For testing purposes, limit the number of images to use
 max_images: int | None = None
@@ -130,7 +134,7 @@ def train_snn_vae():
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = SpikingVAE(latent_dim=64, time_steps=16, img_height=128, img_width=128).to(device)
+    model = SpikingVAE(latent_dim=64, time_steps=50, img_height=128, img_width=128).to(device)
 
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate, betas=(beta1, 0.999))
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
@@ -184,9 +188,11 @@ def train_snn_vae():
         avg_ssim = total_ssim / len(val_loader.dataset)
         ssim_scores.append(avg_ssim)
 
-        print(f'Epoch [{epoch + 1}/{epochs}], Train Loss: {train_losses[-1]:.4f}, Val Loss: {val_losses[-1]:.4f}, SSIM: {avg_ssim:.4f}')
+        print(
+            f'Epoch [{epoch + 1}/{epochs}], Train Loss: {train_losses[-1]:.4f}, Val Loss: {val_losses[-1]:.4f}, SSIM: {avg_ssim:.4f}')
         if (epoch + 1) % 10 == 0:
-            save_file(model.state_dict(), f"../models/snn_vae_checkpoints/snn_vae_epoch_{epoch+1}_v{version}.safetensors")
+            save_file(model.state_dict(),
+                      f"../models/snn_vae_checkpoints/snn_vae_epoch_{epoch + 1}_v{version}.safetensors")
 
     save_file(model.state_dict(), f"../models/snn_vae_checkpoints/snn_vae_detextify_v{version}.safetensors")
 
